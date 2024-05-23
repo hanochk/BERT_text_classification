@@ -11,9 +11,9 @@ import torch
 from sklearn.model_selection import train_test_split
 
 from transformers import get_linear_schedule_with_warmup
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from torch.utils.data import DataLoader
-from transformers import DistilBertForSequenceClassification, AdamW
+from transformers import DistilBertForSequenceClassification, DistilBertTokenizerFast, PreTrainedTokenizerBase, AdamW
 import re
 import torch
 import torch
@@ -85,7 +85,7 @@ def transform_single_text(
     chunk_size: int,
     stride: int,
     minimal_chunk_length: int,
-    maximal_text_length: Optional[int],
+    maximal_text_length: int,
 ) -> tuple[Tensor, Tensor]:
     """Transforms (the entire) text to model input of BERT model."""
     if maximal_text_length:
@@ -124,7 +124,7 @@ def main_1(name):
     optim = AdamW(model.parameters(), lr=5e-5)
 
     for epoch in range(3):
-        for batch in tqdm(train_loader):
+        for batch in tqdm.tqdm(train_loader):
             optim.zero_grad()
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
@@ -138,10 +138,17 @@ def main_1(name):
 
 def main():
     # Use a breakpoint in the code line below to debug your script.
-    base_dir = r'C:\HanochWorkSpce\Projects\news_classification\assignment_data_en.csv'
+    base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification\assignment_data_en.csv'
     df = pd.read_csv(base_dir, index_col=False)
     print('Web text typ', df.content_type.unique())
     print('evidence', len(df[df.content_type=='news'])/len(df))
+    debug = True
+
+    if debug:
+        print('partial data')
+        df = df[:100]
+
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
     cleaner = TextCleaner() # remove \n , un necessay characters , and lowercasing
     df['cleaned_text'] = df['scraped_text'].apply(cleaner.clean_text)
@@ -153,31 +160,47 @@ def main():
                                                         train_labels, test_size=.1)
 
     print('Train set {}, Val set {}, test set {}'.format(len(train_labels), len(val_labels), len(test_labels)))
-    # tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
-    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-    # train_encodings = tokenizer(train_texts.to_list(), padding=True, truncation=True, return_tensors="pt")
-    # val_encodings = tokenizer(val_texts.to_list(), padding=True, truncation=True)
-    # test_encodings = tokenizer(test_texts.to_list(), padding=True, truncation=True)
+    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+    # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
 
-    # train_dataset = NewsDataset(train_encodings, train_labels)
-    # val_dataset = NewsDataset(val_encodings, val_labels)
-    # test_dataset = NewsDataset(test_encodings, test_labels)
+    # model = AutoModelForSequenceClassification.from_pretrained("google-bert/bert-base-cased", num_labels=2)
+    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased',num_labels=2)
+    # Fine-tune only classiifer
+    for name, param in model.named_parameters():
+        if 'classifier' not in name: # classifier layer
+            param.requires_grad = False
+    # Validation
+    for name, param in model.named_parameters():
+         print(name, param.requires_grad)
 
-    train_dataset = NewsDataset(train_texts.to_list(), train_labels)
-    val_dataset = NewsDataset(val_texts, val_labels)
-    test_dataset = NewsDataset(test_texts, test_labels)
+
+    if 1:
+    # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+        train_encodings = tokenizer(train_texts.to_list(), padding=True, truncation=True,
+                                    return_tensors="pt")
+        val_encodings = tokenizer(val_texts.to_list(), padding=True, truncation=True,
+                                  return_tensors="pt")
+        test_encodings = tokenizer(test_texts.to_list(), padding=True, truncation=True,
+                                   return_tensors="pt")
+
+        train_dataset = NewsDataset_token(train_encodings, train_labels.to_list())
+        val_dataset = NewsDataset_token(val_encodings, val_labels.to_list())
+        test_dataset = NewsDataset_token(test_encodings, test_labels.to_list())
+    else:
+        train_dataset = NewsDataset(train_texts.to_list(), train_labels)
+        val_dataset = NewsDataset(val_texts.to_list(), val_labels)
+        test_dataset = NewsDataset(test_texts.to_list(), test_labels)
 
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
     n_epochs = 5
-    batch_size = 1
+    # batch_size = 1
 
-    bert_distil = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
-    tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(bert_distil.parameters(), lr=1e-3)
+
+    # criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
     # X_train = []
     # Y_train = []
@@ -189,8 +212,8 @@ def main():
     # Y_train = torch.cat(Y_train)
 
     running_loss = 0.0
-    bert_distil.cuda()
-    bert_distil.train(True)
+    model.to(device)
+    model.train()
     for epoch in range(n_epochs):
         # permutation = torch.randperm(len(X_train))
         # for i in range(0,len(X_train), batch_size):
@@ -201,16 +224,16 @@ def main():
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
-            # outputs = bert_distil(batch_x)
-            loss = criterion(outputs[0], labels)
+            outputs = model(input_ids, attention_mask=attention_mask, labels=labels, return_dict=False) #  its default loss is the crossentropy
+            # outputs = model(batch_x)
+            loss = outputs[0] # return the CE out of the model
+            # loss2 = criterion(outputs[1], labels)
             loss.backward()
             optimizer.step()
 
             running_loss += loss.item()
 
-        print('[%d] epoch loss: %.3f' %
-          (epoch + 1, running_loss / len(X_train) * batch_size))
+        print('{} epoch loss: {:3f} '.format(epoch + 1, running_loss / len(train_loader.dataset)))
         running_loss = 0.0
 
 if __name__ == '__main__':
