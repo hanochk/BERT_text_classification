@@ -9,7 +9,7 @@ from transformers import DistilBertTokenizer, DistilBertForSequenceClassificatio
 import torch.optim as optim
 import torch.nn as nn
 import torch
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import *
 
 from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm
@@ -17,8 +17,10 @@ from torch.utils.data import DataLoader
 from transformers import DistilBertForSequenceClassification, DistilBertTokenizerFast, PreTrainedTokenizerBase, AdamW
 import re
 import torch
-import torch
 from torch import Tensor
+import numpy as np
+from eval_metrices import p_r_plot
+from train_eval_transformer_classification import *
 
 class TextCleaner():
     def __init__(self):
@@ -99,84 +101,6 @@ def transform_single_text(
     input_ids, attention_mask = stack_tokens_from_all_chunks(input_id_chunks, mask_chunks)
     return input_ids, attention_mask
 
-def main_1(name):
-
-    train_texts, train_labels = read_imdb_split('../input/aclmdb/aclImdb/train')
-    test_texts, test_labels = read_imdb_split('../input/aclmdb/aclImdb/test')
-    train_texts, val_texts, train_labels, val_labels = train_test_split(train_texts, train_labels, test_size=.2)
-    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
-
-    train_encodings = tokenizer(train_texts, truncation=True, padding=True)
-    val_encodings = tokenizer(val_texts, truncation=True, padding=True)
-    test_encodings = tokenizer(test_texts, truncation=True, padding=True)
-    train_dataset = NewsDataset(train_encodings, train_labels)
-    val_dataset = NewsDataset(val_encodings, val_labels)
-    test_dataset = NewsDataset(test_encodings, test_labels)
-
-
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-
-    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased')
-    model.to(device)
-    model.train()
-
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-
-    optim = AdamW(model.parameters(), lr=5e-5)
-
-    for epoch in range(3):
-        for batch in tqdm.tqdm(train_loader):
-            optim.zero_grad()
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs[0]
-            loss.backward()
-            optim.step()
-            optim.zero_grad()
-    model.eval()
-
-def train_model(model, train_loader, optimizer, device='cpu', num_epochs=1):
-    all_targets = list()
-    all_predictions = list()
-    # max_iter = kwargs.pop('max_iterations', -1)
-    all_total_loss = list()
-
-    running_loss = 0.0
-    model.to(device)
-    model.train()
-    for epoch in range(num_epochs):
-        # permutation = torch.randperm(len(X_train))
-        # for i in range(0,len(X_train), batch_size):
-        for batch in tqdm(train_loader):
-            optimizer.zero_grad()
-            # indices = permutation[i:i+batch_size]
-            # batch_x, batch_y = X_train[indices].cuda(), Y_train[indices].cuda()
-            all_targets.append(batch['labels'])
-
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels, return_dict=False) #  its default loss is the crossentropy
-            # outputs = model(batch_x)
-            loss = outputs[0] # return the CE out of the model
-            # loss2 = criterion(outputs[1], labels)
-            all_total_loss.append(loss.detach().cpu().numpy().item())
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-
-            predictions = torch.nn.functional.softmax(outputs[1], dim=1)
-            all_predictions.append(predictions.detach().cpu().numpy())
-
-
-        print('{} epoch loss: {:3f} '.format(epoch + 1, running_loss / len(train_loader.dataset)))
-        running_loss = 0.0
-        # plt.savefig(os.path.join(base_dir, 'training_loss_sanity.png'))
-
-    return all_targets, all_predictions, all_total_loss
 
 def main():
     # Use a breakpoint in the code line below to debug your script.
@@ -244,9 +168,41 @@ def main():
     # criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-    all_targets, all_predictions, all_total_loss = train_model(model, train_loader=train_loader, optimizer=optimizer,
-                device=device, num_epochs=n_epochs)
+    all_val_total_loss = list()
+    all_train_total_loss = list()
+    for epoch in range(n_epochs):
+        if 1:
+            all_targets, all_predictions, train_total_loss = train_model(model, train_loader=train_loader,
+                                                                       optimizer=optimizer,
+                                                                        device=device, num_epochs=1)
 
+            all_train_total_loss.append(np.array(train_total_loss))
+
+        all_targets_val, all_predictions_val, val_total_loss = eval_model(model, dataloader=val_loader,
+                                                              device=device)
+
+        all_val_total_loss.append(np.array(val_total_loss).mean())
+
+    model.save_pretrained(os.path.join(base_dir, 'distilbert-base-uncased-news_cls'), from_pt=True)
+
+    print('Validation set AP : ')
+    p_r_plot(all_targets_val, all_predictions_val[:, 1], positive_label=1, save_dir=base_dir,
+                        unique_id='Validation set')
+
+    plt.figure()
+    plt.plot([x.mean() for x in all_train_total_loss ], 'b', label='train loss')
+    plt.plot(all_val_total_loss, 'r', label='validation loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title("Learning curve epochs={}".format(n_epochs))
+    plt.legend(loc="upper right")
+    plt.grid()
+    plt.savefig(
+        os.path.join(base_dir, 'learning_curve.jpg'))
+    plt.close('all')
+
+    all_targets_test, all_predictions_test, test_total_loss = eval_model(model, dataloader=test_loader,
+                                                              device=device)
 
 if __name__ == '__main__':
     main()
