@@ -2,7 +2,8 @@
 import pandas as pd
 # Press Ctrl+F5 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
+import os
+import matplotlib.pyplot as plt
 from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
 
 import torch.optim as optim
@@ -136,9 +137,50 @@ def main_1(name):
             optim.zero_grad()
     model.eval()
 
+def train_model(model, train_loader, optimizer, device='cpu', num_epochs=1):
+    all_targets = list()
+    all_predictions = list()
+    # max_iter = kwargs.pop('max_iterations', -1)
+    all_total_loss = list()
+
+    running_loss = 0.0
+    model.to(device)
+    model.train()
+    for epoch in range(num_epochs):
+        # permutation = torch.randperm(len(X_train))
+        # for i in range(0,len(X_train), batch_size):
+        for batch in tqdm(train_loader):
+            optimizer.zero_grad()
+            # indices = permutation[i:i+batch_size]
+            # batch_x, batch_y = X_train[indices].cuda(), Y_train[indices].cuda()
+            all_targets.append(batch['labels'])
+
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            labels = batch['labels'].to(device)
+            outputs = model(input_ids, attention_mask=attention_mask, labels=labels, return_dict=False) #  its default loss is the crossentropy
+            # outputs = model(batch_x)
+            loss = outputs[0] # return the CE out of the model
+            # loss2 = criterion(outputs[1], labels)
+            all_total_loss.append(loss.detach().cpu().numpy().item())
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+
+            predictions = torch.nn.functional.softmax(outputs[1], dim=1)
+            all_predictions.append(predictions.detach().cpu().numpy())
+
+
+        print('{} epoch loss: {:3f} '.format(epoch + 1, running_loss / len(train_loader.dataset)))
+        running_loss = 0.0
+        # plt.savefig(os.path.join(base_dir, 'training_loss_sanity.png'))
+
+    return all_targets, all_predictions, all_total_loss
+
 def main():
     # Use a breakpoint in the code line below to debug your script.
-    base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification\assignment_data_en.csv'
+    base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification'
     df = pd.read_csv(base_dir, index_col=False)
     print('Web text typ', df.content_type.unique())
     print('evidence', len(df[df.content_type=='news'])/len(df))
@@ -202,39 +244,9 @@ def main():
     # criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
-    # X_train = []
-    # Y_train = []
-    # for row in train_df.iterrows():
-    #     seq = tokenizer.encode(row[1]['text'],  add_special_tokens=True, pad_to_max_length=True)[:100]
-    #     X_train.append(torch.tensor(seq).unsqueeze(0))
-    #     Y_train.append(torch.tensor([row[1]['target']]))
-    # X_train = torch.cat(X_train)
-    # Y_train = torch.cat(Y_train)
+    all_targets, all_predictions, all_total_loss = train_model(model, train_loader=train_loader, optimizer=optimizer,
+                device=device, num_epochs=n_epochs)
 
-    running_loss = 0.0
-    model.to(device)
-    model.train()
-    for epoch in range(n_epochs):
-        # permutation = torch.randperm(len(X_train))
-        # for i in range(0,len(X_train), batch_size):
-        for batch in tqdm(train_loader):
-            optimizer.zero_grad()
-            # indices = permutation[i:i+batch_size]
-            # batch_x, batch_y = X_train[indices].cuda(), Y_train[indices].cuda()
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels, return_dict=False) #  its default loss is the crossentropy
-            # outputs = model(batch_x)
-            loss = outputs[0] # return the CE out of the model
-            # loss2 = criterion(outputs[1], labels)
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item()
-
-        print('{} epoch loss: {:3f} '.format(epoch + 1, running_loss / len(train_loader.dataset)))
-        running_loss = 0.0
 
 if __name__ == '__main__':
     main()
