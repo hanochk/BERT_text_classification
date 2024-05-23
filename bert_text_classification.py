@@ -181,7 +181,7 @@ def train_model(model, train_loader, optimizer, device='cpu', num_epochs=1):
 def main():
     # Use a breakpoint in the code line below to debug your script.
     base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification'
-    df = pd.read_csv(base_dir, index_col=False)
+    df = pd.read_csv(os.path.join(base_dir, 'assignment_data_en.csv'), index_col=False)
     print('Web text typ', df.content_type.unique())
     print('evidence', len(df[df.content_type=='news'])/len(df))
     debug = True
