@@ -20,7 +20,7 @@ import torch
 from torch import Tensor
 import numpy as np
 import time
-from eval_metrices import p_r_plot
+from eval_metrices import *
 from train_eval_transformer_classification import *
 
 class TextCleaner():
@@ -105,74 +105,29 @@ def transform_single_text(
 
 def main():
     # Use a breakpoint in the code line below to debug your script.
-    # base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification'
     # !python /content/drive/MyDrive/Colab\ Notebooks/BERT_text_classification/bert_text_classification.py
-
-    
-    base_dir = '/content/drive/MyDrive/Colab Notebooks/BERT_text_classification'
+    colab = False
+    if not colab:
+        base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification'
+    else:
+        base_dir = '/content/drive/MyDrive/Colab Notebooks/BERT_text_classification'
     unique_run_name = str(int(time.time()))
 
-    df = pd.read_csv(os.path.join(base_dir, 'assignment_data_en.csv'), index_col=False)
-    print('Web text typ', df.content_type.unique())
-    print('evidence', len(df[df.content_type=='news'])/len(df))
-    debug = False
+    test_loader, train_loader, val_loader = data_processing(base_dir, debug=False)
 
-    if debug:
-        print('partial data')
-        df = df[:100]
 
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-
-    cleaner = TextCleaner() # remove \n , un necessay characters , and lowercasing
-    df['cleaned_text'] = df['scraped_text'].apply(cleaner.clean_text)
-    df['label'] = df['content_type'].apply(lambda x: 1 if x=='news' else 0)
-    train_texts, test_texts, train_labels, test_labels = train_test_split(df['cleaned_text'],
-                                                        df['label'], test_size=.1)
-
-    train_texts, val_texts, train_labels, val_labels = train_test_split(train_texts,
-                                                        train_labels, test_size=.1)
-
-    print('Train set {}, Val set {}, test set {}'.format(len(train_labels), len(val_labels), len(test_labels)))
-    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
-    # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-
-    # model = AutoModelForSequenceClassification.from_pretrained("google-bert/bert-base-cased", num_labels=2)
-    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased',num_labels=2)
+    model = DistilBertForSequenceClassification.from_pretrained('distilbert-base-uncased', num_labels=2)
     # Fine-tune only classiifer
     for name, param in model.named_parameters():
-        if 'classifier' not in name: # classifier layer
+        if 'classifier' not in name:  # classifier layer
             param.requires_grad = False
     # Validation
     for name, param in model.named_parameters():
-         print(name, param.requires_grad)
+        print(name, param.requires_grad)
 
-
-    if 1:
-    # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-        train_encodings = tokenizer(train_texts.to_list(), padding=True, truncation=True,
-                                    return_tensors="pt")
-        val_encodings = tokenizer(val_texts.to_list(), padding=True, truncation=True,
-                                  return_tensors="pt")
-        test_encodings = tokenizer(test_texts.to_list(), padding=True, truncation=True,
-                                   return_tensors="pt")
-
-        train_dataset = NewsDataset_token(train_encodings, train_labels.to_list())
-        val_dataset = NewsDataset_token(val_encodings, val_labels.to_list())
-        test_dataset = NewsDataset_token(test_encodings, test_labels.to_list())
-    else:
-        train_dataset = NewsDataset(train_texts.to_list(), train_labels)
-        val_dataset = NewsDataset(val_texts.to_list(), val_labels)
-        test_dataset = NewsDataset(test_texts.to_list(), test_labels)
-
-    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
     n_epochs = 3
-    # batch_size = 1
-
-
-    # criterion = nn.CrossEntropyLoss()
     lr = 1e-2
     optimizer = optim.Adam(model.parameters(), lr=lr)
     
@@ -180,12 +135,11 @@ def main():
     all_val_total_loss = list()
     all_train_total_loss = list()
     for epoch in range(n_epochs):
-        if 1:
-            all_targets, all_predictions, train_total_loss = train_model(model, train_loader=train_loader,
-                                                                       optimizer=optimizer,
-                                                                        device=device, num_epochs=1)
+        all_targets, all_predictions, train_total_loss = train_model(model, train_loader=train_loader,
+                                                                   optimizer=optimizer,
+                                                                    device=device, num_epochs=1)
 
-            all_train_total_loss.append(np.array(train_total_loss))
+        all_train_total_loss.append(np.array(train_total_loss))
 
         all_targets_val, all_predictions_val, val_total_loss = eval_model(model, dataloader=val_loader,
                                                               device=device)
@@ -195,7 +149,7 @@ def main():
     model.save_pretrained(os.path.join(base_dir, unique_run_name + 'distilbert-base-uncased-news_cls'), from_pt=True)
 
     print('Validation set AP : ')
-    p_r_plot(all_targets_val, all_predictions_val[:, 1], positive_label=1, save_dir=base_dir,
+    roc_plot(all_targets_val, all_predictions_val[:, 1], positive_label=1, save_dir=base_dir,
                         unique_id=unique_run_name + 'Validation set')
 
     plt.figure()
@@ -212,6 +166,53 @@ def main():
 
     all_targets_test, all_predictions_test, test_total_loss = eval_model(model, dataloader=test_loader,
                                                               device=device)
+
+    roc_plot(all_targets_test, all_predictions_test[:, 1], positive_label=1, save_dir=base_dir,
+                    unique_id=unique_run_name + 'Test set')
+    print(all_predictions_test)
+    print(all_targets_test)
+
+
+def data_processing(base_dir: str, debug=True):
+    df = pd.read_csv(os.path.join(base_dir, 'assignment_data_en.csv'), index_col=False)
+    print('Web text typ', df.content_type.unique())
+    print('evidence', len(df[df.content_type == 'news']) / len(df))
+
+
+    if debug:
+        print('partial data')
+        df = df[:100]
+    cleaner = TextCleaner()  # remove \n , un necessay characters , and lowercasing
+    df['cleaned_text'] = df['scraped_text'].apply(cleaner.clean_text)
+    df['label'] = df['content_type'].apply(lambda x: 1 if x == 'news' else 0)
+    train_texts, test_texts, train_labels, test_labels = train_test_split(df['cleaned_text'],
+                                                                          df['label'], test_size=.1, random_state=1)
+    train_texts, val_texts, train_labels, val_labels = train_test_split(train_texts,
+                                                                        train_labels, test_size=.1, random_state=1)
+    print('Train set {}, Val set {}, test set {}'.format(len(train_labels), len(val_labels), len(test_labels)))
+    tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+    # model = AutoModelForSequenceClassification.from_pretrained("google-bert/bert-base-cased", num_labels=2)
+    if 1:
+        # tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+        train_encodings = tokenizer(train_texts.to_list(), padding=True, truncation=True,
+                                    return_tensors="pt")
+        val_encodings = tokenizer(val_texts.to_list(), padding=True, truncation=True,
+                                  return_tensors="pt")
+        test_encodings = tokenizer(test_texts.to_list(), padding=True, truncation=True,
+                                   return_tensors="pt")
+
+        train_dataset = NewsDataset_token(train_encodings, train_labels.to_list())
+        val_dataset = NewsDataset_token(val_encodings, val_labels.to_list())
+        test_dataset = NewsDataset_token(test_encodings, test_labels.to_list())
+    else:
+        train_dataset = NewsDataset(train_texts.to_list(), train_labels)
+        val_dataset = NewsDataset(val_texts.to_list(), val_labels)
+        test_dataset = NewsDataset(test_texts.to_list(), test_labels)
+    train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
+    return test_loader, train_loader, val_loader
+
 
 if __name__ == '__main__':
     main()
