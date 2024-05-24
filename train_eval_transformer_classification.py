@@ -24,7 +24,7 @@ def eval_model(model, dataloader, device, **kwargs):
             outputs = model(input_ids, attention_mask=attention_mask, labels=labels, return_dict=False) #  its default loss is the crossentropy
             loss = outputs[0] # return the CE out of the model
 
-            all_targets.append(labels)
+            all_targets.append(batch['labels'])
             labels.to(device).long()
             total_loss = outputs[0]
 

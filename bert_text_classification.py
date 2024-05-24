@@ -19,6 +19,7 @@ import re
 import torch
 from torch import Tensor
 import numpy as np
+import time
 from eval_metrices import p_r_plot
 from train_eval_transformer_classification import *
 
@@ -104,11 +105,17 @@ def transform_single_text(
 
 def main():
     # Use a breakpoint in the code line below to debug your script.
-    base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification'
+    # base_dir = r'C:\HanochWorkSpce\Projects\news_classification\BERT_text_classification'
+    # !python /content/drive/MyDrive/Colab\ Notebooks/BERT_text_classification/bert_text_classification.py
+
+    
+    base_dir = '/content/drive/MyDrive/Colab Notebooks/BERT_text_classification'
+    unique_run_name = str(int(time.time()))
+
     df = pd.read_csv(os.path.join(base_dir, 'assignment_data_en.csv'), index_col=False)
     print('Web text typ', df.content_type.unique())
     print('evidence', len(df[df.content_type=='news'])/len(df))
-    debug = True
+    debug = False
 
     if debug:
         print('partial data')
@@ -161,13 +168,15 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=16, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=16, shuffle=False)
 
-    n_epochs = 5
+    n_epochs = 3
     # batch_size = 1
 
 
     # criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-
+    lr = 1e-2
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    
+    print('Learning rate', lr)
     all_val_total_loss = list()
     all_train_total_loss = list()
     for epoch in range(n_epochs):
@@ -183,11 +192,11 @@ def main():
 
         all_val_total_loss.append(np.array(val_total_loss).mean())
 
-    model.save_pretrained(os.path.join(base_dir, 'distilbert-base-uncased-news_cls'), from_pt=True)
+    model.save_pretrained(os.path.join(base_dir, unique_run_name + 'distilbert-base-uncased-news_cls'), from_pt=True)
 
     print('Validation set AP : ')
     p_r_plot(all_targets_val, all_predictions_val[:, 1], positive_label=1, save_dir=base_dir,
-                        unique_id='Validation set')
+                        unique_id=unique_run_name + 'Validation set')
 
     plt.figure()
     plt.plot([x.mean() for x in all_train_total_loss ], 'b', label='train loss')
@@ -198,7 +207,7 @@ def main():
     plt.legend(loc="upper right")
     plt.grid()
     plt.savefig(
-        os.path.join(base_dir, 'learning_curve.jpg'))
+        os.path.join(base_dir, unique_run_name + 'learning_curve.jpg'))
     plt.close('all')
 
     all_targets_test, all_predictions_test, test_total_loss = eval_model(model, dataloader=test_loader,
